@@ -1,13 +1,17 @@
-﻿using System;
+﻿using ElGamal.Models;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace ElGamal.Services
 {
     public class CryptoService : ICryptoService
     {
+        private Dictionary<Guid, SessionKeys> keyStorage = new Dictionary<Guid, SessionKeys>();
         private List<int> firstPrimes = new List<int>();
         private List<BigInteger> primes = new List<BigInteger>
         {
@@ -28,7 +32,7 @@ namespace ElGamal.Services
             FirstPrimesInit();
         }
 
-        public void FirstPrimesInit()
+        private void FirstPrimesInit()
         {
             for (int i = 3; i < 2000; ++i)
             {
@@ -45,19 +49,74 @@ namespace ElGamal.Services
             }
         }
 
-        public void GenerateSessionKeys()
+        private BigInteger FindMutuallyPrimeNumber(BigInteger p)
         {
+            for(int i = 0; i < firstPrimes.Count; ++i)
+            {
+                if (p % firstPrimes[i] != 0)
+                {
+                    return new BigInteger(firstPrimes[i]);
+                }
+            }
 
+            return p - 1;
         }
 
-        public BigInteger GetBigPrime()
+        private Guid GenerateSessionKeys()
+        {
+            SessionKeys keys = new SessionKeys();
+            keys.P = GetBigPrime();
+            keys.G = FindPrimitiveRoot(keys.P);
+            keys.X = GenerateRandom();
+            keys.Y = BinPow(keys.G, keys.X, keys.P);
+            Guid guid = Guid.NewGuid();
+            keyStorage.Add(guid, keys);
+            return guid;
+        }
+
+        private BigInteger GetBigPrime()
         {
             Random r = new Random();
             int rand = r.Next(0, 9);
             return primes[rand];
         }
 
-        public BigInteger GcdExtent(BigInteger a, BigInteger b, ref BigInteger x, ref BigInteger y)
+        private byte[] GetHash(String text)
+        {
+            using (var md5 = MD5.Create())
+            {
+                var resultBytes = md5.ComputeHash(Encoding.UTF8.GetBytes(text));
+                return resultBytes;
+            }
+        }
+
+        public Signature GenerateSignature(String message)
+        {
+            Guid key = GenerateSessionKeys();
+            SessionKeys keys = keyStorage[key];
+            byte[] hash = GetHash(message);
+            BigInteger digest = (new BigInteger(hash) + keys.P - 1) % (keys.P - 1);
+            BigInteger k = FindMutuallyPrimeNumber(keys.P - 1);
+            BigInteger r = BinPow(keys.G, k, keys.P);
+            BigInteger kOpposite = FindOpposite(k, keys.P - 1);
+            BigInteger s = (((((digest % (keys.P - 1)) - (keys.X * r) % (keys.P - 1))) % (keys.P - 1) * kOpposite % (keys.P - 1)) % (keys.P - 1) + keys.P - 1) % (keys.P  - 1);
+            Signature result = new Signature { SignatureId = key, R = Convert.ToBase64String(r.ToByteArray()), S = Convert.ToBase64String(s.ToByteArray()) };
+            return result;
+        }
+
+        public bool Check(string text, Signature signature)
+        {
+            SessionKeys keys = keyStorage[signature.SignatureId];
+            BigInteger R = new BigInteger(Convert.FromBase64String(signature.R));
+            BigInteger S = new BigInteger(Convert.FromBase64String(signature.S));
+            if (R <= 0 || R >= keys.P) return false;
+            if (S <= 0 || S >= keys.P - 1) return false;
+            byte[] hash = GetHash(text);
+            BigInteger digest = (new BigInteger(hash) + keys.P - 1) % (keys.P - 1);
+            return (BinPow(keys.Y, R, keys.P) * BinPow(R, S, keys.P)) % keys.P == BinPow(keys.G, digest, keys.P);
+        }
+
+        private BigInteger GcdExtent(BigInteger a, BigInteger b, ref BigInteger x, ref BigInteger y)
         {
             if (a == 0)
             {
@@ -71,17 +130,57 @@ namespace ElGamal.Services
             return d;
         }
 
-        //public BigInteger FindOpposite()
-        //{
-        //    BigInteger x, y;
-        //    BigInteger g = GcdExtent(a, m, x, y);
-        //    if (g != 1)
-        //        return 0;
-        //    else
-        //    {
-        //        x = (x % m + m) % m;
-        //        cout << x;
-        //    }
-        //}
+        private BigInteger GenerateRandom()
+        {
+            byte[] rnd = new byte[513];
+            Random rand = new Random();
+            for (int i = 0; i < 511; ++i)
+            {
+                rnd[i] = (byte)rand.Next(0, 255);
+            }
+            rnd[511] = (byte)rand.Next(0, 127);
+
+            BigInteger result = new BigInteger(rnd);
+            if (result < 2)
+                result = GenerateRandom();
+            return result;
+        }
+
+        private BigInteger Legendre(BigInteger num, BigInteger module)
+        {
+            return BinPow(num, (module - 1) / 2, module);
+        }
+
+        private BigInteger BinPow(BigInteger baseValue, BigInteger exponent, BigInteger module)
+        {
+            BigInteger res = new BigInteger(1);
+            while (exponent > 0)
+            {
+                if (exponent % 2 == 1)
+                {
+                    res = (res * baseValue) % module;
+                }
+                exponent /= 2;
+                baseValue = (baseValue * baseValue) % module;
+            }
+            return res;
+        }
+
+        private BigInteger FindPrimitiveRoot(BigInteger p)
+        {
+            BigInteger candidate = GenerateRandom();
+            while (Legendre(candidate, p) == 1)
+            {
+                candidate = GenerateRandom();
+            }
+            return candidate;
+        }
+
+        private BigInteger FindOpposite(BigInteger a, BigInteger m)
+        {
+            BigInteger x, y;
+            BigInteger g = GcdExtent(a, m, ref x, ref y);
+            return (x % m + m) % m;
+        }
     }
 }

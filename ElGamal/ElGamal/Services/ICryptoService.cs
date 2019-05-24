@@ -1,4 +1,5 @@
-﻿using System;
+﻿using ElGamal.Models;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -8,6 +9,7 @@ namespace ElGamal.Services
 {
     public interface ICryptoService
     {
-        BigInteger GetBigPrime();
+        Signature GenerateSignature(String message);
+        bool Check(string text, Signature signature);
     }
 }
